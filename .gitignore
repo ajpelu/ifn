@@ -3,4 +3,6 @@
 .RData
 .Ruserdata
 
-data/raw_ifn/
+
+data/raw_ifn_p/
+data/raw_ifn_sig/
