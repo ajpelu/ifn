@@ -43,7 +43,9 @@ PCEspPar <- file_paths %>%
 
 ```{r}
 estadillos_qp <- PCEspPar %>% filter(Especie == "043") %>% 
-  unite("idplot", Provincia,Estadillo)
+  unite("idplot", Provincia,Estadillo) 
+
+write_csv(estadillos_qp, here::here("data/estadillos_qp.csv"))
 ```
 
 - ¿Qué posición ocupa el Q. pyrenaica en cada parcela? 
@@ -60,12 +62,12 @@ s1 <- s %>%
   mutate(a = paste0("n = ",n),
          b = paste0("; ", per, "%")) %>% 
   unite("d", a:b, sep="") %>% dplyr::select(PosEsp, d)
+knitr::kable(s1)
 ```
 
 Obtengo un total de `r nrow(estadillos_qp)` parcelas en las que está el Qpyr como especie. Exploramos la posición que ocupa el Qpyr en cada estadillo, y observamos que de las `r nrow(estadillos_qp)` parcelas, en `r nrow(estadillos_qp %>% filter(PosEsp == 1))` parcelas aparece como especie mayoritaria (posicion 1). 
 
 ```{r}
-
 ocupa <- estadillos_qp %>%
   mutate(Ocupa = as.numeric(Ocupa)) %>% 
   group_by(PosEsp) %>% 
@@ -95,13 +97,10 @@ estadillos_qp %>%
 ```
 
 
-
-
 ## 2. Importar datos de los pies mayores IFN3 e IFN2 
 
+```{r, eval=FALSE}
 ### ifn3 
-
-```{r}
 # get all file paths of the PCMayores.xlsx 
 file_paths <- list.files("data/raw_ifn_p/", recursive = TRUE) %>% 
   .[str_detect(., "PCMayores.xlsx")]
@@ -115,13 +114,15 @@ PCMayores <- file_paths %>%
   mutate_at(c("nArbol", "Rumbo", "Distanci", "Dn1", "Dn2", "Ht"), 
             as.numeric) 
 
-PCMayores <- PCMayores %>% unite("idplot", Provincia,Estadillo)
+PCMayores <- PCMayores %>% unite("idplot", Provincia,Estadillo, remove = FALSE)
+write_csv(PCMayores, here::here("data/pcmayores/PCMayores.csv"))
 ```
 
 
-### ifn2 
 
-```{r}
+
+```{r, eval=FALSE}
+### ifn2 
 # get all file paths of the PCMayores.xlsx 
 file_paths <- list.files("data/raw_ifn_p/", recursive = TRUE) %>% 
   .[str_detect(., "PCMayores2.xlsx")]
@@ -135,15 +136,23 @@ PCMayores2 <- file_paths %>%
   mutate_at(c("Rumbo", "Distanci", "Diametro1", "Diametro2", "Altura"), 
             as.numeric)
 
-PCMayores2 <- PCMayores2 %>% unite("idplot", Provincia,Estadillo)
+PCMayores2 <- PCMayores2 %>% unite("idplot", Provincia,Estadillo, remove = FALSE)
+write_csv(PCMayores2, here::here("data/pcmayores/PCMayores2.csv"))
 ```
-
 
 ```{r}
 # check si se han importado 50 provincias en cada caso
 nrow(PCMayores %>% dplyr::select(Provincia) %>% unique())
 nrow(PCMayores2 %>% dplyr::select(Provincia) %>% unique())
 ```
+
+
+```{r}
+PCMayores <- read_csv(here::here("data/pcmayores/PCMayores.csv"))
+PCMayores2 <- read_csv(here::here("data/pcmayores/PCMayores2.csv"))
+```
+
+
 
 ## Función para calcular la biomasa
 ```{r}

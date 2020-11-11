@@ -1,17 +1,106 @@
 ---
-title: "explore_diff_QP"
-output: 
-  md_document:
-    variant: markdown_github
-editor_options: 
-  chunk_output_type: console
+title: "Evolucion biomasa *Quercus pyrenaica* IFN2-IFN3"
+date: "2020"
+author: "Antonio J. Pérez-Luque"
+output:
+  rmdformats::robobook
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+library(knitr)
+library(rmdformats)
+
 library("here")
-source(here::here("load_pkgs.R"))
+library("tidyverse")
+library("magrittr")
+library("tidylog")
+library("xlsx")
+library("sp")
+library("mapview")
+library("modeest") # mode estimation 
+library("foreign") # read dbf 
+library("flextable") 
+library("scales")
+library("leafletR")
+
+## Global options
+options(max.print="75")
+opts_chunk$set(echo=FALSE,
+               cache=TRUE,
+               prompt=FALSE,
+               tidy=TRUE,
+               comment=NA,
+               message=FALSE,
+               warning=FALSE)
+opts_knit$set(width=75)
 ```
+
+
+## *Q. pyrenaica* en IFN 
+
+Seleccionamos aquellos estadillos que contengan los datos de Q. pyrenaica 
+
+```{r}
+estadillos_qp <- read_csv(here::here("data/estadillos_qp.csv"))
+```
+
+- ¿Qué posición ocupa el Q. pyrenaica en cada parcela? 
+
+```{r}
+s <- estadillos_qp %>% 
+  group_by(PosEsp) %>% 
+  summarise(n = n()) %>% 
+  mutate(per = round((n / sum(n)*100),2)) 
+
+knitr::kable(s)
+
+s1 <- s %>% 
+  mutate(a = paste0("n = ",n),
+         b = paste0("; ", per, "%")) %>% 
+  unite("d", a:b, sep="") %>% dplyr::select(PosEsp, d)
+```
+
+Obtengo un total de `r nrow(estadillos_qp)` parcelas en las que está el Qpyr como especie. Exploramos la posición que ocupa el Qpyr en cada estadillo, y observamos que de las `r nrow(estadillos_qp)` parcelas, en `r nrow(estadillos_qp %>% filter(PosEsp == 1))` parcelas aparece como especie mayoritaria (posicion 1). 
+
+```{r}
+ocupa <- estadillos_qp %>%
+  mutate(Ocupa = as.numeric(Ocupa)) %>% 
+  group_by(PosEsp) %>% 
+  summarise(
+    n = n(),
+    min = min(Ocupa),
+    max = max(Ocupa),
+    mean = mean(Ocupa),
+    m = mlv(Ocupa, method = "mfv")
+  )
+
+knitr::kable(ocupa)
+```
+
+```{r}
+estadillos_qp %>% 
+  mutate(Ocupa = as.numeric(Ocupa)) %>% 
+  inner_join(s1) %>% 
+  unite("label", c(PosEsp,d), sep= "; ", remove = FALSE) %>% 
+  ggplot(aes(x=Ocupa)) + 
+  geom_bar() + 
+  facet_wrap(~label, ncol=1) + 
+  theme_bw() + 
+  xlab("% Ocupación") + ylab("") +
+  scale_x_continuous(breaks=seq(1,10,1)) +
+  theme(panel.grid.minor = element_blank())
+```
+
+
+## Cómputo de biomasa en las parcelas de *Q. pyrenaica* 
+
+Seleccionamos los Pies Mayores de las parcelas que cumplan los siguientes criterios: 
+
+  - Especie principal (Esp = 1) sea *Q. pyrenaica* 
+  - Parcelas que se hayan medido en el IFN2 
+  
+Posteriormente filtramos (eliminamos) aquellos datos de los que no tengamos altura del árbol. Ahora procedemos a calcular con los datos h y dbh los diferentes componentes de la biomasa de *Q. pyrenaica* en estas parcelas mediante las ecuaciones de Montero 
+
 
 ```{r}
 # Read datos plots
@@ -34,20 +123,16 @@ parcelas2 <- read_csv(here::here("data/PCParcelas2.csv")) %>%
   dplyr::select("Estadillo" = ESTADILLO, provincia, year2) %>% 
   unite("idplot", provincia,Estadillo)
 
-```
 
-
-# Datos de años 
-
-
-
-# Join data  
-```{r}
 biomasaQP <- bdiff_pos1 %>% 
   inner_join(plots) %>% 
   inner_join(parcelas) %>% 
   inner_join(parcelas2) 
+```
 
+En el siguiente mapa podemos ver una distribución en la P. Ibérica de las parcelas seleccionadas 
+
+```{r}
 biomasaQP_spat <- SpatialPointsDataFrame(
   coords = biomasaQP[, c("CoorX", "CoorY")],
   data = biomasaQP, proj4string = CRS("+init=epsg:23030")) 
@@ -58,7 +143,10 @@ mapview::mapview(biomasaQP_spat, color = "blue", col.regions = "blue")
 ```
 
 
-## Explore 
+
+
+### ¿Que ha ocurrido con la biomasa de Q. pyrenaica en la P. Ibérica? 
+
 ```{r}
 # Biomasa total 
 # area
@@ -66,34 +154,35 @@ a <- ((pi*25*25)/10000)
 
 b <- biomasaQP %>% 
   dplyr::select(n_trees_ifn3, ntrees_d, ws_d, wb27_d, wb2_d, wr_d, CoorX, CoorY, year3, year2) %>% 
-  mutate(bt_a = round((ws_d + wb27_d + wb2_d),2),
-         bt_r = round(wr_d,2), 
-         bt = bt_a + bt_r) %>% 
-  mutate(years = year3 - year2,
-         bt_years = bt/years,
-         bt_ha = bt/a, 
-         bt_ha_year = bt_years / a) %>% 
+  mutate(bt_a = round((ws_d + wb27_d + wb2_d),2), # Aboveground biomass
+         bt_r = round(wr_d,2), # Belowground biomass
+         bt = bt_a + bt_r) %>%  #  Total biomass
+  mutate(years = year3 - year2, # How many years? 
+         bt_years = bt/years, # Total biomass / year 
+         bt_ha = bt/a, # Total biomass / ha 
+         bt_ha_year = bt_years / a) %>% # Total biomass / ha year 
   mutate(trees = 
            case_when(
-             ntrees_d < 0 ~ "Disminución",
-             ntrees_d == 0 ~ "Sin cambios",
-             ntrees_d > 0 ~ "Incremento"),
+             ntrees_d < 0 ~ "< 0 ",
+             ntrees_d == 0 ~ "0",
+             ntrees_d > 0 ~ "> 0"),
          tipo_biomasa_above = 
            case_when(
-             bt_a > 0 ~ "ganancia",
-             bt_a == 0 ~ "neutro",
-             bt_a < 0 ~ "perdida"),
+             bt_a > 0 ~ "Increase",
+             bt_a == 0 ~ "Not changes",
+             bt_a < 0 ~ "Decrease"),
          tipo_biomasa_below = 
            case_when(
-             bt_r > 0 ~ "ganancia",
-             bt_r == 0 ~ "neutro",
-             bt_r < 0 ~ "perdida"), 
+             bt_r > 0 ~ "Increase",
+             bt_r == 0 ~ "Not changes",
+             bt_r < 0 ~ "Decrease"), 
          tipo_biomasa_total =
            case_when(
-             bt > 0 ~ "ganancia",
-             bt == 0 ~ "neutro",
-             bt  < 0 ~ "perdida")
+             bt > 0 ~ "Increase",
+             bt == 0 ~ "Not changes",
+             bt  < 0 ~ "Decrease")
            )
+
 
 
 # Sumo y paso a Megagram (o toneladas)
@@ -102,10 +191,33 @@ bs <- b %>%
   summarise(
     n = n(), 
     variacion = sum(bt_ha/1000), 
-    sd = sd(bt_ha), 
-    se = sd/sqrt(n))
+    avg = round(mean(bt_ha/1000), 2),
+    sd = sd(bt_ha/1000), 
+    se = paste0("(", round(sd/sqrt(n),2), ")")) %>% 
+  unite(m, c("avg","se"), sep = " ", remove = FALSE) %>% 
+  mutate(co2 = round(variacion * 0.475*(44/12),2))
 
 
+write.csv(bs, here::here("data/variacionBiomasaQP.csv"))
+
+bsf <- flextable(bs, 
+                 col_keys = c("trees", "tipo_biomasa_total", "n", "variacion", "co2", "m")) %>% 
+  merge_v(j = "trees") %>% 
+  set_header_labels(trees = paste(as.character("\u2206"), "trees", sep=" "),
+                    tipo_biomasa_total = "Biomass", 
+                    co2 = "Total Carbon",
+                    n = "# plots",
+                    variacion = paste(as.character("\u2206"), "total biomass", sep=" "), 
+                    m = "average variation")
+```
+
+Hemos analizado los datos de un total de `r biomasaQP %>% nrow()` parcelas que cumplían los criterios, y hemos observado un incremento total de `r sum(bs$variacion)` toneladas de biomasa / ha entre los dos inventarios forestales (1996-2005) para estas parcelas. Observamos que en `r (bs %>% group_by(tipo_biomasa_total) %>% summarise(sum(n)) %>% filter(tipo_biomasa_total == "Increase") %>% as.data.frame())[1,2]` parcelas se ha producido un incremento de biomasa. En la siguiente tabla y gráfica podemos ver con mas detalle estos resultados. Asimismo observamos un secuestro de carbono de `r sum(bs$co2)` toneladas. 
+
+```{r}
+bsf
+```
+
+```{r}
 bs %>% ggplot(aes(x=trees, y=variacion, fill=tipo_biomasa_total)) +
   geom_bar(stat="identity", position = position_dodge(0.9)) +
   xlab(expression(Delta~"trees (IFN3-IFN2)")) +
@@ -113,16 +225,6 @@ bs %>% ggplot(aes(x=trees, y=variacion, fill=tipo_biomasa_total)) +
   theme_bw() + 
   theme(legend.position = "none") +
   scale_fill_manual(values=c("#E69F00", "#56B4E9"))
-```
-
-
-# % de Carbono existente en la materia seca
-Según Kollman (1995) aprox. 50 % de la madera es Carbono. Para Q. pyrenaica Montero et al 2006 dan un 47.5 % en peso de Carbono contenido en la materia seca de Q. pyrenaica. 
-
-Por otro lado la cantidad de CO2 se computa multiplicando la cantidad de C por el 3.67 (i.e. el ratio entre el peso molecular del CO2 y el peso molecular del C)
-
-```{r}
-bs <- bs %>% mutate(co2 = suma * 0.475*(44/12))
 ```
 
 

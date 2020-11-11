@@ -10,7 +10,7 @@ este [link](https://www.miteco.gob.es/es/biodiversidad/servicios/banco-datos-nat
 for z in *.zip; do unzip $z && rm $z; done
 ```
 
-- Con este script de bash consigo convertir la base de datos de cada provincia. Utilizo el .jar de [RebaseData](https://www.rebasedata.com/convert-access-to-xlsx-online) 
+- Con este script de bash consigo convertir la base de datos de cada provincia. Utilizo el .jar de [RebaseData](https://www.rebasedata.com/convert-access-to-xlsx-online). Ver también este [repo](https://github.com/rebasedata/java-client)
 
 - He pagado 19 $USD para tener la licencia premium 
 
