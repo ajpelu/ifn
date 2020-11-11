@@ -1,0 +1,131 @@
+---
+title: "explore_diff_QP"
+output: 
+  md_document:
+    variant: markdown_github
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library("here")
+source(here::here("load_pkgs.R"))
+```
+
+```{r}
+# Read datos plots
+plots <- read_csv(here::here("data/PCDatosMap.csv")) %>% dplyr::select(-X1)
+
+# Read datos biomass dif 
+bdiff_pos1 <- read_csv(here::here("data/biomass_diff_pos1.csv")) %>% 
+  dplyr::select(-X1) %>% 
+  mutate(provincia = stringr::str_extract(idplot, "^.{2}"))
+
+# Read datos parcelas (year) 
+parcelas <- read_csv(here::here("data/PCParcelas.csv")) %>% 
+  dplyr::select(idplot, year3 = Ano)
+
+parcelas2 <- read_csv(here::here("data/PCParcelas2.csv")) %>% 
+  dplyr::select(PROVINCIA, ESTADILLO, ANO) %>% 
+  mutate(ESTADILLO = formatC(ESTADILLO, width = 4, flag = "0"),
+         provincia = formatC(PROVINCIA, width = 2, flag = "0"),
+         year2 = as.numeric(ANO + 1900)) %>% 
+  dplyr::select("Estadillo" = ESTADILLO, provincia, year2) %>% 
+  unite("idplot", provincia,Estadillo)
+
+```
+
+
+# Datos de años 
+
+
+
+# Join data  
+```{r}
+biomasaQP <- bdiff_pos1 %>% 
+  inner_join(plots) %>% 
+  inner_join(parcelas) %>% 
+  inner_join(parcelas2) 
+
+biomasaQP_spat <- SpatialPointsDataFrame(
+  coords = biomasaQP[, c("CoorX", "CoorY")],
+  data = biomasaQP, proj4string = CRS("+init=epsg:23030")) 
+
+biomasaQP_spat <- spTransform(biomasaQP_spat, CRS("+init=epsg:4326"))
+
+mapview::mapview(biomasaQP_spat, color = "blue", col.regions = "blue")
+```
+
+
+## Explore 
+```{r}
+# Biomasa total 
+# area
+a <- ((pi*25*25)/10000)
+
+b <- biomasaQP %>% 
+  dplyr::select(n_trees_ifn3, ntrees_d, ws_d, wb27_d, wb2_d, wr_d, CoorX, CoorY, year3, year2) %>% 
+  mutate(bt_a = round((ws_d + wb27_d + wb2_d),2),
+         bt_r = round(wr_d,2), 
+         bt = bt_a + bt_r) %>% 
+  mutate(years = year3 - year2,
+         bt_years = bt/years,
+         bt_ha = bt/a, 
+         bt_ha_year = bt_years / a) %>% 
+  mutate(trees = 
+           case_when(
+             ntrees_d < 0 ~ "Disminución",
+             ntrees_d == 0 ~ "Sin cambios",
+             ntrees_d > 0 ~ "Incremento"),
+         tipo_biomasa_above = 
+           case_when(
+             bt_a > 0 ~ "ganancia",
+             bt_a == 0 ~ "neutro",
+             bt_a < 0 ~ "perdida"),
+         tipo_biomasa_below = 
+           case_when(
+             bt_r > 0 ~ "ganancia",
+             bt_r == 0 ~ "neutro",
+             bt_r < 0 ~ "perdida"), 
+         tipo_biomasa_total =
+           case_when(
+             bt > 0 ~ "ganancia",
+             bt == 0 ~ "neutro",
+             bt  < 0 ~ "perdida")
+           )
+
+
+# Sumo y paso a Megagram (o toneladas)
+bs <- b %>% 
+  group_by(trees, tipo_biomasa_total) %>% 
+  summarise(
+    n = n(), 
+    variacion = sum(bt_ha/1000), 
+    sd = sd(bt_ha), 
+    se = sd/sqrt(n))
+
+
+bs %>% ggplot(aes(x=trees, y=variacion, fill=tipo_biomasa_total)) +
+  geom_bar(stat="identity", position = position_dodge(0.9)) +
+  xlab(expression(Delta~"trees (IFN3-IFN2)")) +
+  ylab(expression(Delta~"Biomasa (Mg / ha)")) + 
+  theme_bw() + 
+  theme(legend.position = "none") +
+  scale_fill_manual(values=c("#E69F00", "#56B4E9"))
+```
+
+
+# % de Carbono existente en la materia seca
+Según Kollman (1995) aprox. 50 % de la madera es Carbono. Para Q. pyrenaica Montero et al 2006 dan un 47.5 % en peso de Carbono contenido en la materia seca de Q. pyrenaica. 
+
+Por otro lado la cantidad de CO2 se computa multiplicando la cantidad de C por el 3.67 (i.e. el ratio entre el peso molecular del CO2 y el peso molecular del C)
+
+```{r}
+bs <- bs %>% mutate(co2 = suma * 0.475*(44/12))
+```
+
+
+
+
+

@@ -1,0 +1,348 @@
+---
+title: "evolucion_ifn"
+output: 
+  md_document:
+    variant: markdown_github
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library("here")
+source(here::here("load_pkgs.R"))
+```
+
+## 1. Importar datos de Estadillos 
+
+## ¿Cuantos plots tienen a Q. pyrenaica? (Especie == 043)
+Estructura:
+
+folders: data/raw_ifn_p/XX/PCEspParc.xlsx
+
+`XX` es el nombre de la provincia 
+
+- Generamos un df con todos los datos de todas las provincias
+
+```{r}
+# get all file paths of the PCEspParc.xlsx 
+file_paths <- list.files("data/raw_ifn_p/", recursive = TRUE) %>% 
+  .[str_detect(., "PCEspParc.xlsx")]
+
+# Read all files and combine into a dataframe 
+# Add a code of the provincia 
+PCEspPar <- file_paths %>% 
+  purrr::map_df(function(x){
+    readxl::read_xlsx(here::here("data/raw_ifn_p/", x)) %>% 
+      mutate(Provincia = gsub("/PCEspParc.xlsx","",x))
+  })
+
+```
+
+- Seleccionamos aquellos estadillos que contengan los datos de Q. pyrenaica 
+
+```{r}
+estadillos_qp <- PCEspPar %>% filter(Especie == "043") %>% 
+  unite("idplot", Provincia,Estadillo)
+```
+
+- ¿Qué posición ocupa el Q. pyrenaica en cada parcela? 
+
+```{r}
+s <- estadillos_qp %>% 
+  group_by(PosEsp) %>% 
+  summarise(n = n()) %>% 
+  mutate(per = round((n / sum(n)*100),2)) 
+
+knitr::kable(s)
+
+s1 <- s %>% 
+  mutate(a = paste0("n = ",n),
+         b = paste0("; ", per, "%")) %>% 
+  unite("d", a:b, sep="") %>% dplyr::select(PosEsp, d)
+```
+
+Obtengo un total de `r nrow(estadillos_qp)` parcelas en las que está el Qpyr como especie. Exploramos la posición que ocupa el Qpyr en cada estadillo, y observamos que de las `r nrow(estadillos_qp)` parcelas, en `r nrow(estadillos_qp %>% filter(PosEsp == 1))` parcelas aparece como especie mayoritaria (posicion 1). 
+
+```{r}
+
+ocupa <- estadillos_qp %>%
+  mutate(Ocupa = as.numeric(Ocupa)) %>% 
+  group_by(PosEsp) %>% 
+  summarise(
+    n = n(),
+    min = min(Ocupa),
+    max = max(Ocupa),
+    mean = mean(Ocupa),
+    m = mlv(Ocupa, method = "mfv")
+  )
+
+knitr::kable(ocupa)
+```
+
+```{r}
+estadillos_qp %>% 
+  mutate(Ocupa = as.numeric(Ocupa)) %>% 
+  inner_join(s1) %>% 
+  unite("label", c(PosEsp,d), sep= "; ", remove = FALSE) %>% 
+  ggplot(aes(x=Ocupa)) + 
+  geom_bar() + 
+  facet_wrap(~label, ncol=1) + 
+  theme_bw() + 
+  xlab("% Ocupación") + ylab("") +
+  scale_x_continuous(breaks=seq(1,10,1)) +
+  theme(panel.grid.minor = element_blank())
+```
+
+
+
+
+## 2. Importar datos de los pies mayores IFN3 e IFN2 
+
+### ifn3 
+
+```{r}
+# get all file paths of the PCMayores.xlsx 
+file_paths <- list.files("data/raw_ifn_p/", recursive = TRUE) %>% 
+  .[str_detect(., "PCMayores.xlsx")]
+
+# Read all files and combine into a dataframe 
+PCMayores <- file_paths %>% 
+  purrr::map_df(function(x){
+    readxl::read_xlsx(here::here("data/raw_ifn_p/", x)) %>% 
+      mutate(Provincia = gsub("/PCMayores.xlsx","",x))
+  }) %>% 
+  mutate_at(c("nArbol", "Rumbo", "Distanci", "Dn1", "Dn2", "Ht"), 
+            as.numeric) 
+
+PCMayores <- PCMayores %>% unite("idplot", Provincia,Estadillo)
+```
+
+
+### ifn2 
+
+```{r}
+# get all file paths of the PCMayores.xlsx 
+file_paths <- list.files("data/raw_ifn_p/", recursive = TRUE) %>% 
+  .[str_detect(., "PCMayores2.xlsx")]
+
+# Read all files and combine into a dataframe 
+PCMayores2 <- file_paths %>% 
+  purrr::map_df(function(x){
+    readxl::read_xlsx(here::here("data/raw_ifn_p/", x)) %>% 
+      mutate(Provincia = gsub("/PCMayores2.xlsx","",x))
+  }) %>% 
+  mutate_at(c("Rumbo", "Distanci", "Diametro1", "Diametro2", "Altura"), 
+            as.numeric)
+
+PCMayores2 <- PCMayores2 %>% unite("idplot", Provincia,Estadillo)
+```
+
+
+```{r}
+# check si se han importado 50 provincias en cada caso
+nrow(PCMayores %>% dplyr::select(Provincia) %>% unique())
+nrow(PCMayores2 %>% dplyr::select(Provincia) %>% unique())
+```
+
+## Función para calcular la biomasa
+```{r}
+# Proposal function
+biomassQpyr <- function(d, h, ...){
+  
+  ws <- 0.0261* d^2 * h
+  wb7 <- NA 
+  wb27 <- (-0.0260 * d^2) + (0.536 * h) + (0.00538 * d^2 * h)
+  wb2 <- (0.898*d) - (0.445*h)
+  wr <- 0.143 * d^2
+  
+  out <- data.frame(ws, wb7, wb27, wb2, wr)
+  return(out)
+}
+  
+```
+
+## Funciones auxiliares
+```{r}
+biomas3 <- function(df3, plots, clase, especie){  
+  bio3 <- df3 %>% 
+    filter(idplot %in% plots$idplot) %>% 
+    filter(Cla == clase) %>% 
+    filter(Especie == especie) %>% 
+    mutate(dbh = rowMeans(cbind(Dn1, Dn2), na.rm=T)/10, 
+         h = Ht) %>% 
+    filter(!is.na(Ht)) %>% 
+    bind_cols(map2_dfr(.$dbh, .$h, biomassQpyr)) 
+  return(bio3)
+} 
+biomas2 <- function(df2, plots, clase, especie){  
+  bio2 <- df2 %>% 
+    filter(idplot %in% plots$idplot) %>% 
+    filter(Especie == as.integer(especie)) %>%
+    mutate(dbh = rowMeans(cbind(Diametro1, Diametro2), na.rm=T)/10, 
+            h = Altura) %>%
+    filter(!is.na(h)) %>%
+    bind_cols(map2_dfr(.$dbh, .$h, biomassQpyr)) 
+  
+   return(bio2)
+} 
+resumen_bio3 <- function(df3){ 
+  out <- df3 %>% 
+    group_by(idplot) %>% 
+    summarise(n_trees_ifn3 = n(), 
+            ws_ifn3 = sum(ws), 
+            wb7_ifn3 = sum(wb7), 
+            wb27_ifn3 = sum(wb27),
+            wb2_ifn3 = sum(wb2), 
+            wr_ifn3 = sum(wr)) %>% 
+  ungroup()
+  
+  return(out)
+}
+resumen_bio2 <- function(df2){ 
+  out <- df2 %>% 
+    group_by(idplot) %>% 
+    summarise(n_trees_ifn2 = n(), 
+            ws_ifn2 = sum(ws), 
+            wb7_ifn2 = sum(wb7), 
+            wb27_ifn2 = sum(wb27),
+            wb2_ifn2 = sum(wb2), 
+            wr_ifn2 = sum(wr)) %>% 
+  ungroup()
+  
+  return(out)
+  }
+biodiff <- function(x2, x3) { 
+  bd <- x2 %>% 
+    full_join(x3, by ="idplot") %>% 
+    mutate(ntrees_d = n_trees_ifn3 - n_trees_ifn2, 
+         ws_d = ws_ifn3 - ws_ifn2, 
+         wb27_d = wb27_ifn3 - wb27_ifn2,
+         wb2_d = wb2_ifn3 - wb2_ifn2, 
+         wr_d = wr_ifn3 - wr_ifn2) %>% 
+  dplyr::select(-wb7_ifn2, wb7_ifn3) %>% 
+  filter(!is.na(n_trees_ifn2)) %>% 
+  filter(!is.na(n_trees_ifn3)) %>% 
+  as.data.frame()
+  
+  return(bd)
+  }
+```
+
+
+
+## Estadillos donde QP es Especie principal 
+```{r}
+qp1 <- estadillos_qp %>% filter(PosEsp == 1) %>% dplyr::select(idplot) %>% as.vector() 
+```
+
+Seleccionamos los Pies Mayores de las parcelas que cumplan: 
+
+  - Especie principal (Esp = 1) sea *Q. pyrenaica* 
+  - Parcelas que se hayan medido en el IFN2 
+  
+Posteriormente filtramos aquellos datos de los que no tengamos altura del árbol. Ahora procedemos a calcular con los datos h y dbh los diferentes componentes de la biomasa de Q. pyrenaica en estas parcelas mediante las ecuaciones de Montero 
+
+```{r}
+b3_qp1 <- biomas3(df3 = PCMayores, plots = qp1, clase = "A", especie = "043")
+b3_qp1_summ <- resumen_bio3(b3_qp1)
+
+b2_qp1 <- biomas2(df2 = PCMayores2, plots = qp1, clase = "A", especie = "043")
+b2_qp1_summ <- resumen_bio2(b2_qp1)
+
+bdif_q1f <- biodiff(x2=b2_qp1_summ, x3=b3_qp1_summ)
+```
+
+
+## Estadillos donde QP es Especie 2 
+```{r}
+qp2 <- estadillos_qp %>% filter(PosEsp == 2) %>% dplyr::select(idplot) %>% as.vector() 
+
+b3_qp2 <- biomas3(df3 = PCMayores, plots = qp2, clase = "A", especie = "043")
+b3_qp2_summ <- resumen_bio3(b3_qp2)
+
+b2_qp2 <- biomas2(df2 = PCMayores2, plots = qp2, clase = "A", especie = "043")
+b2_qp2_summ <- resumen_bio2(b2_qp2)
+
+bdif_q2f <- biodiff(x2=b2_qp2_summ, x3=b3_qp2_summ)
+```
+
+## Estadillos donde QP es Especie 3 
+```{r}
+qp3 <- estadillos_qp %>% filter(PosEsp == 3) %>% dplyr::select(idplot) %>% as.vector() 
+
+b3_qp3 <- biomas3(df3 = PCMayores, plots = qp3, clase = "A", especie = "043")
+b3_qp3_summ <- resumen_bio3(b3_qp3)
+
+b2_qp3 <- biomas2(df2 = PCMayores2, plots = qp3, clase = "A", especie = "043")
+b2_qp3_summ <- resumen_bio2(b2_qp3)
+
+bdif_q3f <- biodiff(x2=b2_qp3_summ, x3=b3_qp3_summ)
+```
+
+```{r}
+write.csv(bdif_q1f, here::here("data/biomass_diff_pos1.csv"))
+write.csv(bdif_q2f, here::here("data/biomass_diff_pos2.csv"))
+write.csv(bdif_q3f, here::here("data/biomass_diff_pos3.csv"))
+```
+
+
+## Datos Espaciales 
+Ojo leo los campos: 
+1,2, 6 y 7; provincia, Estadillo, CoorX y CoorY 
+
+```{r}
+# get all file paths of the PCDatosMap.xlsx 
+file_paths <- list.files("data/raw_ifn_p/", recursive = TRUE) %>% 
+  .[str_detect(., "PCDatosMap.xlsx")]
+
+# Read all files and combine into a dataframe 
+PCDatosMap <- file_paths %>% 
+  purrr::map_df(function(x){
+    read.xlsx(here::here("data/raw_ifn_p/", x),
+               sheetIndex = 1, 
+               colIndex = c(1,2,6,7))
+  })
+
+
+PCDatosMap <- PCDatosMap %>% 
+  unite("idplot", Provincia,Estadillo) 
+
+write.csv(PCDatosMap, here::here("data/PCDatosMap.csv"))
+```
+
+
+## Datos de fecha
+### IFN3 
+```{r}
+file_paths <- list.files("data/raw_ifn_p/", recursive = TRUE) %>% 
+  .[str_detect(., "PCParcelas.xlsx")]
+
+
+# Read all files and combine into a dataframe 
+PCParcelas <- file_paths %>% 
+  purrr::map_df(function(x){
+    readxl::read_xlsx(here::here("data/raw_ifn_p/", x)) %>% 
+      mutate(Provincia = gsub("/PCParcelas.xlsx","",x))
+  })
+
+PCParcelas  <- PCParcelas  %>% unite("idplot", Provincia,Estadillo)
+write.csv(PCParcelas, here::here("data/PCParcelas.csv"))
+```
+
+### IFN2 
+
+```{r}
+
+file_paths <- list.files("data/raw_ifn2/", recursive = TRUE) %>% 
+  .[str_detect(., "DATEST")]
+
+pcparcelas2 <- file_paths %>% 
+  purrr::map_df(function(x){
+    foreign::read.dbf(here::here("data/raw_ifn2/", x)) 
+  })
+
+write.csv(pcparcelas2, here::here("data/PCParcelas2.csv"))
+
+```
+
